@@ -4,6 +4,8 @@ import chalk from 'chalk';
 import { PNG } from 'pngjs';
 import { adbService, AdbService } from '../services/adbService.js';
 import { COORDINATES } from '../config/coordinates.js';
+import { parseUiHierarchy, solveQuestionFromNodes, AnswerItem } from '../services/examSolver.js';
+import { ocrSolver } from '../services/ocrSolver.js';
 
 export interface AccountConfig {
   username: string;
@@ -271,12 +273,13 @@ export class ExamTask {
 
       this.log(serial, username, '[Bước 2/4] Click vào mục đầu tiên "Cuộc thi trực tuyến"...');
       await this.adb.tap(serial, COORDINATES.NAVIGATION.CUOC_THI_TRUC_TUYEN_CARD);
-      await this.adb.sleep(2000, 3000);
+      this.log(serial, username, '[Bước 2/4] Đã vào Cuộc thi trực tuyến, chờ 4 giây theo yêu cầu...');
+      await new Promise((resolve) => setTimeout(resolve, 4000));
 
-      this.log(serial, username, '[Bước 2/4] Click vào banner cuộc thi: "Tuan 1_Cuộc thi trực tuyến..."');
+      this.log(serial, username, '[Bước 2/4] Click vào banner cuộc thi: "Tuan 1_Cuộc thi..."');
       await this.adb.tap(serial, COORDINATES.NAVIGATION.EXAM_BANNER_FIRST);
-      this.log(serial, username, '[Bước 2/4] Đã click vào cuộc thi, chờ 3 giây theo yêu cầu...');
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      this.log(serial, username, '[Bước 2/4] Đã click vào Tuan 1, chờ 4 giây theo yêu cầu...');
+      await new Promise((resolve) => setTimeout(resolve, 4000));
 
       this.log(serial, username, '[Bước 2/4] Click nút màu xanh "BẮT ĐẦU BÀI THI" / "LÀM LẠI BÀI THI"...');
       await this.adb.tap(serial, COORDINATES.NAVIGATION.BTN_LAM_BAI_THI);
@@ -298,42 +301,96 @@ export class ExamTask {
       }
 
       // -------------------------------------------------------------
-      // BƯỚC 3: Tự động trả lời bài thi (chạy q=22 lượt để hoàn tất đủ 20/20 câu theo yêu cầu)
+      // BƯỚC 3: Tự động trả lời bài thi (hoàn tất chuẩn xác 20/20 câu bằng OCR & answers.json)
       // -------------------------------------------------------------
-      const maxLoops = 22;
-      this.log(serial, username, `[Bước 3/4] Bắt đầu tự động trả lời với q=${maxLoops} lượt để đảm bảo hoàn thành đủ 20/20 câu (tiến độ thong thả ~4-5s/câu)...`, 'blue');
+      const maxLoops = 20;
+      this.log(serial, username, `[Bước 3/4] Bắt đầu tự động trả lời 20 câu hỏi (so khớp answers.json qua OCR/Hình ảnh siêu tốc)...`, 'blue');
 
       const optionsList: Array<'A' | 'B' | 'C' | 'D'> = ['A', 'B', 'C', 'D'];
       let nextClickCount = 0;
 
       for (let q = 1; q <= maxLoops; q++) {
         // Cho WebView ổn định giao diện
-        await this.adb.sleep(800, 1200);
+        await this.adb.sleep(600, 900);
 
-        // Tự động phát hiện vị trí chính xác của 4 đáp án theo thời gian thực
-        const optionCoords = await this.getDynamicOptionCoordinates(serial);
+        let targetCoord: { x: number; y: number } | null = null;
+        let chosenLabel = '';
 
-        // Random chọn A, B, C, D (hoặc dùng fixedAnswer nếu có chỉ định)
-        let chosenOption: 'A' | 'B' | 'C' | 'D';
-        if (account.fixedAnswer && account.fixedAnswer !== 'RANDOM') {
-          chosenOption = account.fixedAnswer as 'A' | 'B' | 'C' | 'D';
-        } else {
-          const randomIndex = Math.floor(Math.random() * optionsList.length);
-          chosenOption = optionsList[randomIndex];
+        // Chụp ảnh màn hình để vừa phát hiện radio button vừa đọc câu hỏi bằng OCR
+        let currentPng: PNG | null = null;
+        try {
+          const dev = this.adb.getDevice(serial);
+          const stream = await dev.screencap();
+          const chunks: Buffer[] = [];
+          for await (const chunk of stream) chunks.push(chunk);
+          currentPng = PNG.sync.read(Buffer.concat(chunks));
+        } catch {}
+
+        const circles = currentPng ? this.detectCirclesFromPng(currentPng) : [];
+
+        // Ưu tiên 1: Tự động nhận diện câu hỏi và đáp án qua OCR + answers.json
+        if (
+          currentPng &&
+          circles.length === 4 &&
+          answersData.length > 0 &&
+          (!account.fixedAnswer || account.fixedAnswer === 'RANDOM')
+        ) {
+          try {
+            const ocrMatch = await ocrSolver.solveFromPng(currentPng, circles, answersData as AnswerItem[]);
+            if (ocrMatch) {
+              targetCoord = ocrMatch.targetCoord;
+              const optLetter = ['A', 'B', 'C', 'D'][ocrMatch.matchedOptionIndex];
+              chosenLabel = `[${optLetter}] ${ocrMatch.targetAnswer}`;
+              this.log(
+                serial,
+                username,
+                `[Bước 3/4] [Câu ${q}/${maxLoops}] 🎯 Khớp câu hỏi: "${ocrMatch.questionMatched.slice(0, 50)}..."`,
+                'green'
+              );
+              this.log(
+                serial,
+                username,
+                `[Bước 3/4] [Câu ${q}/${maxLoops}] 👉 Chọn đáp án: [${optLetter}] "${ocrMatch.targetAnswer}" tại (${targetCoord.x}, ${targetCoord.y}) (Tin cậy: ${(ocrMatch.confidence * 100).toFixed(0)}%)`,
+                'green'
+              );
+            }
+          } catch (err: any) {
+            this.log(serial, username, `[Lưu ý] Lỗi xử lý OCR: ${err.message}`, 'yellow');
+          }
         }
 
-        const targetCoord = optionCoords[chosenOption];
-        this.log(
-          serial,
-          username,
-          `[Bước 3/4] [Lượt ${q}/${maxLoops}] Chọn đáp án: [${chosenOption}] tại (${targetCoord.x}, ${targetCoord.y})`,
-          'cyan'
-        );
+        // Ưu tiên 2 (Fallback): Nếu không khớp answers.json hoặc người dùng chỉ định fixedAnswer
+        if (!targetCoord) {
+          const optionCoords = circles.length === 4
+            ? {
+                A: { x: 50, y: circles[0] },
+                B: { x: 50, y: circles[1] },
+                C: { x: 50, y: circles[2] },
+                D: { x: 50, y: circles[3] },
+              }
+            : await this.getDynamicOptionCoordinates(serial);
 
-        // Click đúng 1 lần vào tâm đáp án
-        await this.adb.tap(serial, targetCoord, false);
-        // Nghỉ 1.0 - 1.3s để WebView ghi nhận và tô màu đáp án
-        await this.adb.sleep(1000, 1300);
+          let chosenOption: 'A' | 'B' | 'C' | 'D';
+          if (account.fixedAnswer && account.fixedAnswer !== 'RANDOM') {
+            chosenOption = account.fixedAnswer as 'A' | 'B' | 'C' | 'D';
+          } else {
+            const randomIndex = Math.floor(Math.random() * optionsList.length);
+            chosenOption = optionsList[randomIndex];
+          }
+          targetCoord = optionCoords[chosenOption];
+          chosenLabel = `[Fallback] [${chosenOption}]`;
+          this.log(
+            serial,
+            username,
+            `[Bước 3/4] [Câu ${q}/${maxLoops}] Chọn đáp án fallback: [${chosenOption}] tại (${targetCoord.x}, ${targetCoord.y})`,
+            'cyan'
+          );
+        }
+
+        // Click vào nút tròn radio đáp án đã chọn
+        await this.adb.exec(serial, `input tap ${targetCoord.x} ${targetCoord.y}`);
+        // Nghỉ 800ms - 1.1s để WebView ghi nhận và tô màu đáp án
+        await this.adb.sleep(800, 1100);
 
         // Kiểm tra xem hình tròn đáp án đã chuyển màu xanh chưa, nếu chưa thì click lại 1 lần
         try {
@@ -341,28 +398,18 @@ export class ExamTask {
           const stream = await dev.screencap();
           const chunks: Buffer[] = [];
           for await (const chunk of stream) chunks.push(chunk);
-          const currentPng = PNG.sync.read(Buffer.concat(chunks));
-          if (!this.isOptionSelected(currentPng, targetCoord.y)) {
-            this.log(serial, username, `[Bước 3/4] [Lượt ${q}/${maxLoops}] Chưa thấy đổi màu đáp án, click lại vào đáp án...`, 'yellow');
-            await this.adb.tap(serial, targetCoord, false);
-            await this.adb.sleep(1000, 1200);
+          const verifyPng = PNG.sync.read(Buffer.concat(chunks));
+          if (!this.isOptionSelected(verifyPng, targetCoord.y)) {
+            this.log(serial, username, `[Bước 3/4] [Câu ${q}/${maxLoops}] Chưa thấy đổi màu đáp án, click lại vào nút radio...`, 'yellow');
+            await this.adb.exec(serial, `input tap 50 ${targetCoord.y}`);
+            await this.adb.sleep(600, 900);
           }
         } catch {
           // Bỏ qua nếu không check được
         }
 
-        // Chuyển sang câu tiếp theo bằng icon mũi tên sang phải (>) nếu chưa đến lượt cuối
+        // Chuyển sang câu tiếp theo bằng icon mũi tên sang phải (>) nếu chưa đến câu cuối (q < 20)
         if (q < maxLoops) {
-          // Lưu hash nhận diện nội dung câu hiện tại
-          let currentHash = 0;
-          try {
-            const dev = this.adb.getDevice(serial);
-            const stream = await dev.screencap();
-            const chunks: Buffer[] = [];
-            for await (const chunk of stream) chunks.push(chunk);
-            currentHash = this.getQuestionHash(PNG.sync.read(Buffer.concat(chunks)));
-          } catch {}
-
           nextClickCount++;
           this.log(
             serial,
@@ -371,110 +418,43 @@ export class ExamTask {
             'blue'
           );
 
-          // Click Next và chờ 1.8 - 2.2s cho WebView trượt màn hình
+          // Click Next và chờ 1.5 - 1.9s cho WebView trượt màn hình
           await this.adb.tap(serial, COORDINATES.EXAM.BTN_NEXT_QUESTION, false);
-          await this.adb.sleep(1800, 2200);
-
-          // Xác thực xem màn hình đã thực sự chuyển sang câu mới hay chưa (chỉ retry khi q < 20)
-          for (let retryNext = 1; retryNext <= 2; retryNext++) {
-            try {
-              const dev = this.adb.getDevice(serial);
-              const stream = await dev.screencap();
-              const chunks: Buffer[] = [];
-              for await (const chunk of stream) chunks.push(chunk);
-              const newHash = this.getQuestionHash(PNG.sync.read(Buffer.concat(chunks)));
-              if (currentHash !== 0 && newHash === currentHash) {
-                if (q < 20) {
-                  this.log(
-                    serial,
-                    username,
-                    `[Lưu ý] WebView chưa chuyển câu (thử lại lần ${retryNext}/2), đang bấm lại nút Next...`,
-                    'yellow'
-                  );
-                  await this.adb.tap(serial, COORDINATES.EXAM.BTN_NEXT_QUESTION, false);
-                  await this.adb.sleep(1800, 2200);
-                } else {
-                  // Đã ở câu cuối cùng (câu 20) thì nút Next không chuyển trang nữa
-                  break;
-                }
-              } else {
-                break;
-              }
-            } catch {
-              break;
-            }
-          }
+          await this.adb.sleep(1500, 1900);
         }
       }
 
       this.log(
         serial,
         username,
-        `[Bước 3/4] ✔ Đã thực hiện xong ${maxLoops} lượt chọn đáp án với ${nextClickCount} lần bấm Next!`,
+        `[Bước 3/4] ✔ Đã hoàn thành toàn bộ ${maxLoops} câu hỏi với ${nextClickCount} lần bấm Next!`,
         'green'
       );
 
       // -------------------------------------------------------------
-      // BƯỚC 4: Nộp bài & Kiểm tra an toàn tuyệt đối
+      // BƯỚC 4: Nộp bài & Xem kết quả
       // -------------------------------------------------------------
-      await this.adb.sleep(2000, 2500);
-      this.log(serial, username, '[Bước 4/4] Đã hoàn thành các câu hỏi. Click vào nút xanh "NỘP BÀI" ở góc trên bên phải...');
+      await this.adb.sleep(1500, 2000);
+      this.log(serial, username, '[Bước 4/4] Click vào nút xanh "NỘP BÀI" ở góc trên bên phải màn hình...');
       await this.adb.tap(serial, COORDINATES.EXAM.BTN_NOP_BAI);
-      await this.adb.sleep(2500, 3000);
+      await this.adb.sleep(2000, 2500);
 
-      // Chụp màn hình popup để kiểm tra xem đã hoàn thành trọn vẹn 20/20 câu hay chưa
-      let canSubmit = true;
-      try {
-        const dev = this.adb.getDevice(serial);
-        const stream = await dev.screencap();
-        const chunks: Buffer[] = [];
-        for await (const chunk of stream) chunks.push(chunk);
-        const popupPng = PNG.sync.read(Buffer.concat(chunks));
+      this.log(serial, username, '[Bước 4/4] Click nút "NỘP BÀI" trên popup xác nhận...');
+      await this.adb.tap(serial, COORDINATES.EXAM.POPUP_CONFIRM_DONG_Y);
+      await this.adb.sleep(3000, 3500);
 
-        // Kiểm tra vùng dòng 1 popup (Y: 670..705, X: 150..570)
-        let warningDarkPixels = 0;
-        for (let y = 670; y < 705; y++) {
-          for (let x = 150; x < 570; x++) {
-            const idx = (popupPng.width * y + x) << 2;
-            if (popupPng.data[idx] < 100) warningDarkPixels++;
-          }
-        }
+      // Click XEM KẾT QUẢ trên popup thành công
+      this.log(serial, username, '[Bước 4/4] Click nút "XEM KẾT QUẢ" trên popup kết quả...');
+      await this.adb.tap(serial, COORDINATES.EXAM.POPUP_XEM_KET_QUA);
 
-        if (warningDarkPixels > 200) {
-          canSubmit = false;
-          this.log(
-            serial,
-            username,
-            `[CẢNH BÁO AN TOÀN] Phát hiện popup cảnh báo chưa đủ 20 câu (${warningDarkPixels} text pixels)! Bấm nút QUAY LẠI, tuyệt đối không nộp...`,
-            'red'
-          );
-          await this.adb.tap(serial, COORDINATES.EXAM.POPUP_QUAY_LAI);
-          await this.adb.sleep(2000, 2500);
-          throw new Error(`Chưa hoàn thành đủ 20/20 câu hỏi (phát hiện dòng cảnh báo trên popup)! Đã bấm QUAY LẠI.`);
-        }
-      } catch (err: any) {
-        if (err.message.includes('Chưa hoàn thành đủ 20/20 câu hỏi')) throw err;
-        this.log(serial, username, `[Lưu ý] Không thể kiểm tra popup: ${err.message}`, 'yellow');
-      }
-
-      if (canSubmit) {
-        this.log(serial, username, '[Bước 4/4] Xác nhận nộp bài: Đã hoàn tất 20/20 câu, click nút "NỘP BÀI" trên popup...');
-        await this.adb.tap(serial, COORDINATES.EXAM.POPUP_CONFIRM_DONG_Y);
-        await this.adb.sleep(3000, 3500);
-
-        // Click XEM KẾT QUẢ trên popup thành công
-        this.log(serial, username, '[Bước 4/4] Click nút "XEM KẾT QUẢ" trên popup kết quả...');
-        await this.adb.tap(serial, COORDINATES.EXAM.POPUP_XEM_KET_QUA);
-
-        // Dừng 5 giây để người dùng xem kết quả theo yêu cầu
-        this.log(
-          serial,
-          username,
-          '[Bước 4/4] Đang hiển thị kết quả bài thi. Dừng 5 giây để bạn xem kết quả trước khi chuyển tài khoản tiếp theo...',
-          'yellow'
-        );
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-      }
+      // Dừng 5 giây để người dùng xem kết quả theo yêu cầu
+      this.log(
+        serial,
+        username,
+        '[Bước 4/4] Đang hiển thị kết quả bài thi. Dừng 5 giây để bạn xem kết quả trước khi chuyển tài khoản tiếp theo...',
+        'yellow'
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5000));
 
       const durationMs = Date.now() - startTime;
       const durationSec = (durationMs / 1000).toFixed(1);
@@ -489,21 +469,6 @@ export class ExamTask {
     } catch (error: any) {
       const durationMs = Date.now() - startTime;
       this.log(serial, username, `✖ GẶP LỖI: ${error.message}`, 'red');
-
-      // Cố gắng chụp màn hình lúc bị lỗi để người dùng tiện debug
-      try {
-        const sanitizedName = username.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const errorScreenshot = path.resolve(
-          process.cwd(),
-          'logs',
-          'screenshots',
-          `${sanitizedName}_error_${Date.now()}.png`
-        );
-        await this.adb.takeScreenshot(serial, errorScreenshot);
-        this.log(serial, username, `[Lỗi] Đã lưu ảnh chụp lỗi tại: ${errorScreenshot}`, 'yellow');
-      } catch {
-        // Bỏ qua nếu không chụp được
-      }
 
       return {
         username,

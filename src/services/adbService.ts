@@ -1,3 +1,4 @@
+
 import { Adb } from '@devicefarmer/adbkit';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -261,6 +262,35 @@ export class AdbService {
     const writeStream = fs.createWriteStream(destinationFilePath);
     await pipeline(stream, writeStream);
     return destinationFilePath;
+  }
+
+  /**
+   * Xuất toàn bộ cây phân cấp giao diện Accessibility XML (UIAutomator Dump)
+   * Tự động thử qua exec-out /dev/tty và fallback qua file /sdcard/window_dump.xml
+   */
+  public async dumpHierarchy(serial: string): Promise<string> {
+    try {
+      const xml = await this.exec(serial, 'uiautomator dump /dev/tty');
+      if (xml && xml.includes('<hierarchy')) {
+        const idx = xml.indexOf('<?xml');
+        const startIdx = idx !== -1 ? idx : xml.indexOf('<hierarchy');
+        return xml.substring(startIdx).trim();
+      }
+    } catch {}
+
+    try {
+      const xml = await this.exec(
+        serial,
+        'uiautomator dump /sdcard/window_dump.xml >/dev/null 2>&1 && cat /sdcard/window_dump.xml'
+      );
+      if (xml && xml.includes('<hierarchy')) {
+        const idx = xml.indexOf('<?xml');
+        const startIdx = idx !== -1 ? idx : xml.indexOf('<hierarchy');
+        return xml.substring(startIdx).trim();
+      }
+    } catch {}
+
+    return '';
   }
 
   /**

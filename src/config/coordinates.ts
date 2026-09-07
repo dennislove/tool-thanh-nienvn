@@ -77,8 +77,8 @@ export const COORDINATES = {
     TAB_DANG_DIEN_RA: { x: 140, y: 165, description: 'Tab Đang diễn ra' },
     // Banner cuộc thi đầu tiên: "Tuan 1_Cuộc thi Huỳnh Thúc Kháng"
     EXAM_BANNER_FIRST: { x: 360, y: 460, description: 'Banner Cuộc thi Huỳnh Thúc Kháng' },
-    // Nút màu xanh lớn: "BẮT ĐẦU BÀI THI" hoặc "LÀM LẠI BÀI THI" (bounds [33, 875][687, 940] -> tâm y: 908)
-    BTN_LAM_BAI_THI: { x: 360, y: 908, description: 'Nút BẮT ĐẦU BÀI THI / LÀM LẠI BÀI THI' },
+    // Nút màu xanh lớn: "BẮT ĐẦU BÀI THI" hoặc "LÀM LẠI BÀI THI" (bounds [24, 665][696, 730] -> tâm x: 360, y: 698)
+    BTN_LAM_BAI_THI: { x: 360, y: 698, description: 'Nút BẮT ĐẦU BÀI THI / LÀM LẠI BÀI THI' },
   },
 
   // Bước 3: Màn hình làm 20 câu trắc nghiệm
@@ -93,13 +93,13 @@ export const COORDINATES = {
     // Nút icon Mũi tên sang phải '>' ở góc dưới cùng bên phải để chuyển sang câu tiếp theo
     // Bounds [550, 1164][693, 1247] -> Tâm chuẩn (622, 1205)
     BTN_NEXT_QUESTION: { x: 622, y: 1205, description: 'Nút mũi tên sang phải (>)' },
-    // Nút xanh "NỘP BÀI" ở góc trên cùng bên phải màn hình
-    BTN_NOP_BAI: { x: 576, y: 215, description: 'Nút NỘP BÀI (góc trên phải)' },
-    // Popup xác nhận nộp bài: Nút xanh "NỘP BÀI" (bounds tâm chuẩn x: 453, y: 816)
-    POPUP_CONFIRM_DONG_Y: { x: 453, y: 816, description: 'Nút Nộp bài trên popup xác nhận' },
-    // Popup xác nhận: Nút xám "QUAY LẠI" (tâm chuẩn x: 266, y: 816)
-    POPUP_QUAY_LAI: { x: 266, y: 816, description: 'Nút QUAY LẠI trên popup xác nhận' },
-    // Popup thông báo nộp bài thành công: Nút xanh "XEM KẾT QUẢ" (tâm chuẩn x: 360, y: 940)
-    POPUP_XEM_KET_QUA: { x: 360, y: 940, description: 'Nút XEM KẾT QUẢ' },
+    // Nút xanh "NỘP BÀI" ở góc trên cùng bên phải màn hình (bounds [434, 150][686, 224] -> tâm x: 560, y: 187)
+    BTN_NOP_BAI: { x: 560, y: 187, description: 'Nút NỘP BÀI (góc trên phải)' },
+    // Popup xác nhận nộp bài: Nút xanh "NỘP BÀI" (bounds [368, 594][594, 670] -> tâm x: 480, y: 632)
+    POPUP_CONFIRM_DONG_Y: { x: 480, y: 632, description: 'Nút Nộp bài trên popup xác nhận' },
+    // Popup xác nhận: Nút xám "QUAY LẠI" (bounds [126, 594][352, 670] -> tâm x: 240, y: 632)
+    POPUP_QUAY_LAI: { x: 240, y: 632, description: 'Nút QUAY LẠI trên popup xác nhận' },
+    // Popup thông báo nộp bài thành công: Nút xanh "XEM KẾT QUẢ" (bounds [120, 694][600, 774] -> tâm x: 360, y: 734)
+    POPUP_XEM_KET_QUA: { x: 360, y: 734, description: 'Nút XEM KẾT QUẢ' },
   },
 };
