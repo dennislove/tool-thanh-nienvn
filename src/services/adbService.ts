@@ -13,6 +13,7 @@ export function detectAdbPath(): string | undefined {
   }
 
   const candidatePaths = [
+    'C:\\LDPlayer\\LDPlayer14\\adb.exe',
     'E:\\LDPlayer\\LDPlayer14\\adb.exe',
     'E:\\LDPlayer\\LDPlayer9\\adb.exe',
     'C:\\LDPlayer\\LDPlayer9\\adb.exe',
@@ -214,11 +215,15 @@ export class AdbService {
   }
 
   /**
-   * Khởi động ứng dụng bằng monkey launcher
+   * Khởi động ứng dụng (thử qua am start trước, fallback sang monkey launcher)
    */
   public async launchApp(serial: string, packageName?: string): Promise<void> {
     const pkg = packageName || (await this.getTargetPackage(serial));
-    await this.exec(serial, `monkey -p ${pkg} -c android.intent.category.LAUNCHER 1`);
+    try {
+      await this.exec(serial, `am start -n ${pkg}/.MainActivity`);
+    } catch {
+      await this.exec(serial, `monkey -p ${pkg} -c android.intent.category.LAUNCHER 1`);
+    }
   }
 
   /**
